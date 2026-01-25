@@ -1,0 +1,55 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Weekly Scripture Study – 5 Steps</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+<script type="importmap">
+{
+  "imports": {
+    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
+    "react/": "https://esm.sh/react@^19.2.3/",
+    "react": "https://esm.sh/react@^19.2.3",
+    "lucide-react": "https://esm.sh/lucide-react@^0.562.0",
+    "jspdf": "https://esm.sh/jspdf@^2.5.1",
+    "html2canvas": "https://esm.sh/html2canvas@^1.4.1"
+  }
+}
+</script>
+<style>
+    /* Custom breakpoint for the 900px requirement */
+    @media (min-width: 900px) {
+        .study-grid {
+            display: grid;
+            grid-template-columns: 65% 35%;
+            gap: 2.5rem;
+        }
+    }
+    @media (max-width: 899px) {
+        .study-grid {
+            display: flex;
+            flex-direction: column;
+            gap: 2rem;
+        }
+    }
+    
+    /* Enhance readability for scripture text */
+    .scripture-content {
+        line-height: 1.8;
+        letter-spacing: 0.015em;
+    }
+
+    /* Print/PDF Specific adjustments */
+    .pdf-content-wrapper {
+        padding: 40px;
+        background: white;
+    }
+</style>
+</head>
+<body class="bg-gray-50 text-gray-900 font-sans">
+    <div id="root"></div>
+</body>
+</html>
