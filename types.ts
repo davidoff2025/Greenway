@@ -51,6 +51,16 @@ export interface UserProfile {
   name: string;
   email: string;
   picture: string;
+  accessCount?: number;
+  totalUsageDuration?: number; // In seconds
+}
+
+export interface LogEntry {
+  timestamp: string;
+  name: string;
+  lessonId: number;
+  ip: string;
+  userAgent: string;
 }
 
 export interface BibleVerse {

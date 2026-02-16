@@ -7,6 +7,9 @@
     <title>Weekly Scripture Study – 5 Steps</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;700;900&display=swap" rel="stylesheet">
 <script type="importmap">
 {
   "imports": {
@@ -20,6 +23,11 @@
 }
 </script>
 <style>
+    /* Source Han Serif (思源宋体) / Noto Serif SC integration */
+    body {
+        font-family: "Noto Serif SC", "Source Han Serif SC", "Source Han Serif CN", serif;
+    }
+
     /* Custom breakpoint for the 900px requirement */
     @media (min-width: 900px) {
         .study-grid {
@@ -38,8 +46,8 @@
     
     /* Enhance readability for scripture text */
     .scripture-content {
-        line-height: 1.8;
-        letter-spacing: 0.015em;
+        line-height: 2.0;
+        letter-spacing: 0.02em;
     }
 
     /* Print/PDF Specific adjustments */
@@ -47,9 +55,14 @@
         padding: 40px;
         background: white;
     }
+
+    /* Standardize inputs to match font */
+    input, textarea, select, button {
+        font-family: inherit;
+    }
 </style>
 </head>
-<body class="bg-gray-50 text-gray-900 font-sans">
+<body class="bg-gray-50 text-gray-900">
     <div id="root"></div>
 </body>
 </html>

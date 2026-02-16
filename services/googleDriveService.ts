@@ -10,10 +10,6 @@ export class GoogleDriveService {
     this.accessToken = token;
   }
 
-  hasToken(): boolean {
-    return this.accessToken !== null;
-  }
-
   private async fetchWithToken(url: string, options: RequestInit = {}) {
     if (!this.accessToken) throw new Error('Not authenticated');
     return fetch(url, {

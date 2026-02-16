@@ -1,22 +1,19 @@
 
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { CURRICULUM, UI_STRINGS, BOOK_NAMES_ZH, BOOK_NAMES_ZH_HANT, VALIDATION_RULES } from './constants';
-import { StudyData, Language, UserProfile, Lesson, BibleVerse, ObservationItem } from './types';
+import { StudyData, Language, UserProfile, Lesson, BibleVerse, ObservationItem, LogEntry } from './types';
 import { driveService } from './services/googleDriveService';
 import { fetchBibleText } from './services/bibleService';
 import StepWizard from './components/StepWizard';
 import OverallStatistics from './components/OverallStatistics';
 import ReviewSummary from './components/ReviewSummary';
 import WeeklyHighlight from './components/WeeklyHighlight';
-import { Cloud, Globe, ChevronDown, Loader2, Check, BarChart2, Plus, AlertCircle, X, ChevronRight, Home as HomeIcon, User as UserIcon, Mail } from 'lucide-react';
+import { Cloud, Globe, ChevronDown, Loader2, Check, BarChart2, Plus, AlertCircle, X, ChevronRight, Home as HomeIcon, User as UserIcon, Info, ShieldCheck } from 'lucide-react';
 
 const GOOGLE_CLIENT_ID = "YOUR_CLIENT_ID_HERE.apps.googleusercontent.com";
 
-type ViewMode = 'study' | 'stats' | 'review';
+type ViewMode = 'study' | 'stats' | 'review' | 'admin';
 
-/**
- * Calculates the current weekly lesson ID based on a Monday-rotation logic.
- */
 function getCurrentClassNumber(): number {
   const FALLBACK = 16;
   try {
@@ -53,8 +50,8 @@ function getCurrentClassNumber(): number {
 const App: React.FC = () => {
   const [lang, setLang] = useState<Language>('zh-hans');
   const [user, setUser] = useState<UserProfile | null>(null);
-  const [showIdentityModal, setShowIdentityModal] = useState(false);
-  const [tempProfile, setTempProfile] = useState({ name: '', email: '' });
+  const [showLogon, setShowLogon] = useState(false);
+  const [tempName, setTempName] = useState('');
   
   const defaultWeeklyLesson = useMemo(() => {
     const id = getCurrentClassNumber();
@@ -75,31 +72,97 @@ const App: React.FC = () => {
   const [reviewData, setReviewData] = useState<StudyData | null>(null);
   const [allLessonsData, setAllLessonsData] = useState<Record<number, Partial<StudyData>>>({});
   const [isReviewLoading, setIsReviewLoading] = useState(false);
+  const [adminLogs, setAdminLogs] = useState<LogEntry[]>([]);
 
   const bibleContainerRef = useRef<HTMLDivElement>(null);
   const t = UI_STRINGS[lang];
 
-  // Identity logic
-  useEffect(() => {
-    const saved = localStorage.getItem('bsf_user_profile');
-    if (saved) {
-      setUser(JSON.parse(saved));
-    } else {
-      setShowIdentityModal(true);
+  // IP fetching utility
+  const getIp = async () => {
+    try {
+      const res = await fetch('https://api.ipify.org?format=json');
+      const data = await res.json();
+      return data.ip || 'Unknown';
+    } catch (e) {
+      return 'Unknown';
     }
+  };
+
+  // Record Logon Event
+  const recordLogon = useCallback(async (name: string, lessonId: number) => {
+    const ip = await getIp();
+    const newLog: LogEntry = {
+      timestamp: new Date().toISOString(),
+      name,
+      lessonId,
+      ip,
+      userAgent: navigator.userAgent
+    };
+    
+    const existingLogs = JSON.parse(localStorage.getItem('bsf_admin_logs') || '[]');
+    const updatedLogs = [newLog, ...existingLogs].slice(0, 200); // Keep last 200
+    localStorage.setItem('bsf_admin_logs', JSON.stringify(updatedLogs));
+    setAdminLogs(updatedLogs);
   }, []);
 
-  const handleSaveIdentity = (e: React.FormEvent) => {
+  // Load all status data for stats view
+  const refreshStatsData = useCallback(() => {
+    const statusMap: Record<number, Partial<StudyData>> = {};
+    CURRICULUM.forEach(l => {
+      const local = localStorage.getItem(`study_${l.id}`);
+      if (local) {
+        statusMap[l.id] = JSON.parse(local);
+      }
+    });
+    setAllLessonsData(statusMap);
+  }, []);
+
+  // User and Access Tracking Logic
+  useEffect(() => {
+    const savedUser = localStorage.getItem('bsf_user_profile');
+    if (savedUser) {
+      const profile: UserProfile = JSON.parse(savedUser);
+      profile.accessCount = (profile.accessCount || 0) + 1;
+      profile.totalUsageDuration = profile.totalUsageDuration || 0;
+      localStorage.setItem('bsf_user_profile', JSON.stringify(profile));
+      setUser(profile);
+      recordLogon(profile.name, defaultWeeklyLesson.id);
+    } else {
+      setShowLogon(true);
+    }
+    refreshStatsData();
+    setAdminLogs(JSON.parse(localStorage.getItem('bsf_admin_logs') || '[]'));
+  }, [refreshStatsData, recordLogon, defaultWeeklyLesson.id]);
+
+  // Duration tracking
+  useEffect(() => {
+    if (!user) return;
+    const interval = setInterval(() => {
+      const savedUser = localStorage.getItem('bsf_user_profile');
+      if (savedUser) {
+        const profile: UserProfile = JSON.parse(savedUser);
+        profile.totalUsageDuration = (profile.totalUsageDuration || 0) + 1;
+        localStorage.setItem('bsf_user_profile', JSON.stringify(profile));
+        setUser(prev => prev ? { ...prev, totalUsageDuration: profile.totalUsageDuration } : null);
+      }
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [user?.name]);
+
+  const handleLogon = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!tempProfile.name || !tempProfile.email) return;
-    const profile: UserProfile = {
-      name: tempProfile.name,
-      email: tempProfile.email,
-      picture: '' // Placeholder
+    if (!tempName.trim()) return;
+    const newUser: UserProfile = {
+      name: tempName.trim(),
+      email: '',
+      picture: '',
+      accessCount: 1,
+      totalUsageDuration: 0
     };
-    localStorage.setItem('bsf_user_profile', JSON.stringify(profile));
-    setUser(profile);
-    setShowIdentityModal(false);
+    localStorage.setItem('bsf_user_profile', JSON.stringify(newUser));
+    setUser(newUser);
+    setShowLogon(false);
+    recordLogon(newUser.name, currentLesson.id);
   };
 
   const chaptersMap = useMemo(() => {
@@ -111,14 +174,13 @@ const App: React.FC = () => {
     return map;
   }, [bibleVerses]);
 
-  const sortedChapters = useMemo(() => Object.keys(chaptersMap).map(Number).sort((a, b) => a - b), [chaptersMap]);
-
   useEffect(() => {
     const handleScrollEvent = (e: any) => {
       const { chapter, verse } = e.detail;
       const verseId = `v-${chapter}-${verse}`;
       const element = document.getElementById(verseId);
       const container = bibleContainerRef.current;
+
       if (element && container) {
         const rect = element.getBoundingClientRect();
         const containerRect = container.getBoundingClientRect();
@@ -132,46 +194,13 @@ const App: React.FC = () => {
     return () => window.removeEventListener('scroll-to-bible-verse', handleScrollEvent);
   }, []);
 
-  const highlightVerse = useCallback((text: string) => {
-    if (!studyData?.step1 || studyData.step1.length === 0) return text;
-    
-    // Extract non-empty observation text, ignore very short strings (like single letters) for sanity
-    const keywords = studyData.step1
-      .map(item => item.text.trim())
-      .filter(t => t.length > 1)
-      .sort((a, b) => b.length - a.length); // Match longer phrases first
-
-    if (keywords.length === 0) return text;
-
-    try {
-      // Escape special characters for regex
-      const pattern = keywords
-        .map(kw => kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-        .join('|');
-      
-      const regex = new RegExp(`(${pattern})`, 'gi');
-      const parts = text.split(regex);
-      
-      return parts.map((part, i) => 
-        regex.test(part) ? (
-          <span key={i} className="bg-yellow-200 px-0.5 rounded font-bold text-[#1A2B3C] shadow-sm">
-            {part}
-          </span>
-        ) : (
-          part
-        )
-      );
-    } catch (e) {
-      return text;
-    }
-  }, [studyData?.step1]);
-
   const getPassageLabel = useCallback(() => {
     if (!currentLesson.passage) return "";
     const p = currentLesson.passage;
     let bookName = p.book;
     if (lang === 'zh-hans') bookName = BOOK_NAMES_ZH[p.book] || p.book;
     if (lang === 'zh-hant') bookName = BOOK_NAMES_ZH_HANT[p.book] || p.book;
+    
     if (lang.startsWith('zh')) {
       if (p.chapterStart === p.chapterEnd) {
         return `${bookName} 第 ${p.chapterStart} 章${p.verseStart ? ` ${p.verseStart}-${p.verseEnd}` : ""}`;
@@ -214,14 +243,12 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const remoteLoad = async () => {
-      if (driveService && user) {
+      if (driveService) {
         try {
           const remoteData = await driveService.loadStudyData(currentLesson.id);
           if (remoteData) {
             setStudyData(remoteData);
-            if (remoteData.submittedAt) {
-              setAllLessonsData(prev => ({ ...prev, [currentLesson.id]: { submittedAt: remoteData.submittedAt } }));
-            }
+            setAllLessonsData(prev => ({ ...prev, [currentLesson.id]: remoteData }));
           } else {
             setStudyData(initStudyData(currentLesson.id));
           }
@@ -230,23 +257,25 @@ const App: React.FC = () => {
         }
       }
     };
-    if (user) remoteLoad();
+    if (user && user.email) remoteLoad();
     else {
       const local = localStorage.getItem(`study_${currentLesson.id}`);
-      setStudyData(local ? JSON.parse(local) : initStudyData(currentLesson.id));
+      const data = local ? JSON.parse(local) : initStudyData(currentLesson.id);
+      setStudyData(data);
+      setAllLessonsData(prev => ({ ...prev, [currentLesson.id]: data }));
     }
   }, [currentLesson, user, initStudyData]);
 
   const handleDataChange = async (newData: StudyData): Promise<void> => {
     setStudyData(newData);
     localStorage.setItem(`study_${currentLesson.id}`, JSON.stringify(newData));
-    if (newData.submittedAt) {
-      setAllLessonsData(prev => ({ ...prev, [newData.lessonId]: { submittedAt: newData.submittedAt } }));
-      if (viewMode === 'review') {
-        setReviewData(newData);
-      }
+    setAllLessonsData(prev => ({ ...prev, [newData.lessonId]: newData }));
+    
+    if (viewMode === 'review') {
+      setReviewData(newData);
     }
-    if (user && driveService.hasToken()) {
+    
+    if (user && user.email) {
       setIsSaving(true);
       try {
         await driveService.saveStudyData(newData);
@@ -257,97 +286,68 @@ const App: React.FC = () => {
     return Promise.resolve();
   };
 
-  const recalculateObservationRefs = useCallback((items: ObservationItem[]): ObservationItem[] => {
-    if (bibleVerses.length === 0) return items;
-    const itemsWithMeta = items.map(item => {
-      const parts = (item as any).ref.split(' – ');
-      const endPart = parts[1] || parts[0]; 
-      const [ch, v] = endPart.split(':').map(Number);
-      const endIdx = bibleVerses.findIndex(bv => bv.chapter === ch && bv.verse === v);
-      return { item, endIdx, endPart };
-    });
-    itemsWithMeta.sort((a, b) => a.endIdx - b.endIdx);
-    return itemsWithMeta.map((meta, i) => {
-      let startVerse = bibleVerses[0];
-      if (i > 0) {
-        const prevEndIdx = itemsWithMeta[i - 1].endIdx;
-        if (prevEndIdx !== -1 && prevEndIdx < bibleVerses.length - 1) {
-          startVerse = bibleVerses[prevEndIdx + 1];
-        } else {
-          startVerse = bibleVerses[prevEndIdx] || bibleVerses[0];
-        }
-      }
-      const newRef = `${startVerse.chapter}:${startVerse.verse} – ${meta.endPart}`;
-      return { ...meta.item, ref: newRef };
-    });
-  }, [bibleVerses]);
-
-  const addItemAtVerse = (chapter: number, verse: number) => {
-    if (!studyData) return;
-    if (studyData.step1.length >= 20) {
-      alert(lang.startsWith('zh') ? "最多只能添加 20 项内容。" : "You can add up to 20 content items.");
-      return;
-    }
-    const newItem: ObservationItem = { id: Math.random().toString(), text: "" };
-    (newItem as any).ref = `? – ${chapter}:${verse}`;
-    const newList = [...studyData.step1, newItem];
-    const updatedList = recalculateObservationRefs(newList);
-    handleDataChange({ ...studyData, step1: updatedList });
-    setTimeout(() => {
-      const inputs = document.querySelectorAll('.inline-content-input');
-      const lastInput = inputs[inputs.length - 1] as HTMLTextAreaElement;
-      if (lastInput) lastInput.focus();
-    }, 50);
-  };
-
-  const deleteItem = (id: string) => {
-    if (!studyData) return;
-    const filtered = studyData.step1.filter(x => x.id !== id);
-    const updated = recalculateObservationRefs(filtered);
-    handleDataChange({ ...studyData, step1: updated });
-  };
-
+  // handlePreview switches to review mode for the current study session.
   const handlePreview = useCallback(() => {
-    if (!studyData) return;
-    setReviewData(studyData);
-    setReviewSource('study');
-    setViewMode('review');
+    if (studyData) {
+      setReviewData(studyData);
+      setReviewSource('study');
+      setViewMode('review');
+    }
   }, [studyData]);
 
-  const handleReviewLesson = async (lessonId: number) => {
+  // handleReviewLesson loads and switches to review mode for a specific historical lesson.
+  const handleReviewLesson = useCallback(async (lessonId: number) => {
     setIsReviewLoading(true);
     try {
-      let data: StudyData | null = null;
-      if (user && driveService.hasToken()) data = await driveService.loadStudyData(lessonId);
-      if (!data) {
+      let data = allLessonsData[lessonId] as StudyData;
+      if (!data || !data.lessonId) {
         const local = localStorage.getItem(`study_${lessonId}`);
-        if (local) data = JSON.parse(local);
+        if (local) {
+          data = JSON.parse(local);
+        } else if (user && user.email) {
+          const remote = await driveService.loadStudyData(lessonId);
+          if (remote) data = remote;
+        }
       }
-      if (data) {
+
+      if (data && data.lessonId) {
         setReviewData(data);
         setReviewSource('stats');
         setViewMode('review');
-      } else {
-        alert(lang.startsWith('zh') ? `未找到第 ${lessonId} 课的已保存作业。` : `No saved homework found for Lesson ${lessonId}.`);
       }
-    } catch (err) {
-      alert(lang.startsWith('zh') ? "加载作业失败，请稍后重试。" : "Failed to load homework. Please try again.");
+    } catch (e) {
+      console.error("Failed to load review data", e);
     } finally {
       setIsReviewLoading(false);
     }
-  };
+  }, [allLessonsData, user]);
 
   const renderBibleContent = () => {
     if (isLoadingBible) return <div className="py-32 text-center text-gray-400">Loading...</div>;
     if (bibleVerses.length === 0) return <div className="py-32 text-center text-gray-400">No Passage.</div>;
+
     const groupedVerses = bibleVerses.reduce((acc, v) => {
       if (!acc[v.chapter]) acc[v.chapter] = [];
       acc[v.chapter].push(v);
       return acc;
     }, {} as Record<number, BibleVerse[]>);
+
     const chapters = Object.keys(groupedVerses).map(Number).sort((a, b) => a - b);
+
     return (
       <div className="space-y-12 pb-24">
+        {step === 1 && (
+          <div className="mb-6 p-4 bg-blue-50 border border-blue-100 rounded-2xl flex items-center gap-3 text-blue-700 animate-in fade-in slide-in-from-top-2 duration-500">
+            <div className="p-2 bg-blue-500 text-white rounded-xl shadow-lg">
+              <Plus size={20} />
+            </div>
+            <p className="text-[14px] font-bold">
+              {lang.startsWith('zh') 
+                ? "点击每节经文旁的“+”按钮，开始记录您的观察事实吧！" 
+                : "Click the '+' button next to each verse to start your observation homework!"}
+            </p>
+          </div>
+        )}
         {chapters.map((ch) => (
           <div key={ch}>
             <div className="mb-6 flex items-center gap-4">
@@ -363,9 +363,7 @@ const App: React.FC = () => {
                   <div key={i} id={`v-${v.chapter}-${v.verse}`} className="relative group">
                     <div className="flex items-start gap-3">
                       <sup className="mt-2 shrink-0 font-bold text-[#FDB913] text-[12px] opacity-80">{v.verse}</sup>
-                      <span className="flex-1 text-[17px] leading-relaxed text-gray-800 italic">
-                        {highlightVerse(v.text)}
-                      </span>
+                      <span className="flex-1 text-[17px] leading-relaxed text-gray-800">{v.text}</span>
                       {step === 1 && (
                         <button 
                           onClick={() => addItemAtVerse(v.chapter, v.verse)}
@@ -383,9 +381,7 @@ const App: React.FC = () => {
                                <span className="text-[10px] font-black text-blue-600 uppercase tracking-[0.2em] px-3 py-1 bg-white border border-blue-100 rounded-full">
                                  {(item as any).ref}
                                </span>
-                               <button onClick={() => deleteItem(item.id)} className="text-blue-300 hover:text-red-500 p-1 rounded-lg">
-                                 <X size={14} />
-                               </button>
+                               <button onClick={() => deleteItem(item.id)} className="text-blue-300 hover:text-red-500 transition-colors p-1"><X size={14} /></button>
                              </div>
                              <textarea
                                className="inline-content-input w-full p-2 bg-transparent outline-none border-none text-[16px] resize-none text-gray-800 leading-relaxed placeholder:text-blue-300 focus:ring-0"
@@ -407,27 +403,61 @@ const App: React.FC = () => {
             </div>
           </div>
         ))}
-        {step === 1 && (
-          <div className="mt-16 pt-8 border-t flex justify-between items-center bg-white sticky bottom-0 z-40 p-6 rounded-t-3xl shadow-[0_-4px_20px_rgba(0,0,0,0.05)] border border-gray-100">
-            <div className="flex items-center gap-2">
-              <span className={`px-4 py-2 rounded-full font-black text-[12px] border ${studyData!.step1.length > 0 ? 'bg-green-50 text-green-600 border-green-100' : 'bg-white text-gray-400 border-gray-100'}`}>
-                {studyData!.step1.length} / {VALIDATION_RULES.step1.max}
-              </span>
-              <span className="text-[10px] text-gray-400 uppercase tracking-widest font-bold">{t.steps[0]}</span>
-            </div>
-            <button 
-              onClick={() => setStep(2)} 
-              className="px-10 py-4 bg-[#1A2B3C] text-white rounded-2xl font-black shadow-lg hover:shadow-xl transition-all flex items-center gap-2"
-            >
-              {t.next} <ChevronRight size={18} />
-            </button>
-          </div>
-        )}
       </div>
     );
   };
 
+  const addItemAtVerse = (chapter: number, verse: number) => {
+    if (!studyData) return;
+    const newItem: ObservationItem = { id: Math.random().toString(), text: "" };
+    (newItem as any).ref = `? – ${chapter}:${verse}`;
+    const newList = [...studyData.step1, newItem];
+    handleDataChange({ ...studyData, step1: newList });
+  };
+
+  const deleteItem = (id: string) => {
+    if (!studyData) return;
+    const filtered = studyData.step1.filter(x => x.id !== id);
+    handleDataChange({ ...studyData, step1: filtered });
+  };
+
   const renderContent = () => {
+    if (viewMode === 'admin') {
+      return (
+        <div className="max-w-6xl mx-auto space-y-8 animate-in fade-in duration-500">
+           <div className="flex items-center justify-between">
+              <h2 className="text-3xl font-black text-[#1A2B3C] tracking-tight">{lang.startsWith('zh') ? "登录日志 (管理员)" : "Logon Logs (Admin)"}</h2>
+              <button onClick={() => setViewMode('study')} className="px-4 py-2 bg-gray-100 rounded-lg font-bold text-gray-500 hover:bg-gray-200 transition-all">{lang.startsWith('zh') ? "返回" : "Back"}</button>
+           </div>
+           <div className="bg-white rounded-3xl shadow-xl overflow-hidden border border-gray-100">
+              <table className="w-full text-left border-collapse">
+                 <thead className="bg-gray-50 border-b">
+                    <tr>
+                       <th className="px-6 py-4 text-[11px] font-black text-gray-400 uppercase tracking-widest">Time</th>
+                       <th className="px-6 py-4 text-[11px] font-black text-gray-400 uppercase tracking-widest">Name</th>
+                       <th className="px-6 py-4 text-[11px] font-black text-gray-400 uppercase tracking-widest">Lesson #</th>
+                       <th className="px-6 py-4 text-[11px] font-black text-gray-400 uppercase tracking-widest">IP Address</th>
+                       <th className="px-6 py-4 text-[11px] font-black text-gray-400 uppercase tracking-widest">Browser</th>
+                    </tr>
+                 </thead>
+                 <tbody className="divide-y text-[13px]">
+                    {adminLogs.map((log, i) => (
+                       <tr key={i} className="hover:bg-gray-50/50">
+                          <td className="px-6 py-4 text-gray-500">{new Date(log.timestamp).toLocaleString()}</td>
+                          <td className="px-6 py-4 font-bold text-[#1A2B3C]">{log.name}</td>
+                          <td className="px-6 py-4"><span className="px-2 py-0.5 bg-blue-50 text-blue-600 rounded-md font-black">{log.lessonId}</span></td>
+                          <td className="px-6 py-4 text-gray-500">{log.ip}</td>
+                          <td className="px-6 py-4 text-gray-400 max-w-xs truncate" title={log.userAgent}>{log.userAgent}</td>
+                       </tr>
+                    ))}
+                    {adminLogs.length === 0 && <tr><td colSpan={5} className="px-6 py-20 text-center text-gray-400">No logs found.</td></tr>}
+                 </tbody>
+              </table>
+           </div>
+        </div>
+      );
+    }
+    
     if (isReviewLoading) {
       return (
         <div className="flex flex-col items-center justify-center py-40 gap-4">
@@ -440,30 +470,17 @@ const App: React.FC = () => {
       case 'stats':
         return (
           <OverallStatistics 
-            lang={lang} 
-            lessons={CURRICULUM} 
-            allData={allLessonsData} 
+            lang={lang} lessons={CURRICULUM} allData={allLessonsData} user={user}
             onReview={handleReviewLesson} 
-            onGoToLesson={(l) => { 
-              setCurrentLesson(l); 
-              setStep(0); 
-              setViewMode('study'); 
-            }} 
+            onGoToLesson={(l) => { setCurrentLesson(l); setStep(0); setViewMode('study'); }} 
           />
         );
       case 'review':
-        if (!reviewData) {
-          setViewMode('stats');
-          return null;
-        }
+        if (!reviewData) { setViewMode('stats'); return null; }
         return (
           <ReviewSummary 
-            data={reviewData} 
-            lang={lang} 
-            onBack={() => setViewMode(reviewSource)} 
-            onSubmit={handleDataChange}
-            onComplete={() => setViewMode('stats')}
-            user={user} 
+            data={reviewData} lang={lang} onBack={() => setViewMode(reviewSource)} 
+            onSubmit={handleDataChange} onComplete={() => setViewMode('stats')} user={user} 
           />
         );
       case 'study':
@@ -479,9 +496,14 @@ const App: React.FC = () => {
           <aside className="space-y-6">
             <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden flex flex-col min-h-[600px]">
               <div className="px-8 py-6 border-b bg-gray-50 flex flex-col gap-2">
-                <h2 className="font-bold flex items-center gap-2 text-gray-500 text-[12px] uppercase tracking-[0.2em]">
-                  <div className="w-1.5 h-4 bg-[#FDB913] rounded-full" /> {t.bible}
-                </h2>
+                <div className="flex justify-between items-center">
+                  <h2 className="font-bold flex items-center gap-2 text-gray-500 text-[12px] uppercase tracking-[0.2em]">
+                    <div className="w-1.5 h-4 bg-[#FDB913] rounded-full" /> {t.bible}
+                  </h2>
+                  <span className="text-[10px] font-black bg-blue-50 text-blue-600 px-3 py-1 rounded-full border border-blue-100 shadow-sm">
+                    {bibleVerses.length} {lang.startsWith('zh') ? '节' : 'verses'}
+                  </span>
+                </div>
                 <div className="text-2xl font-extrabold text-[#1A2B3C] tracking-tight">{getPassageLabel()}</div>
               </div>
               <div ref={bibleContainerRef} className="flex-1 px-8 py-10 overflow-y-auto bg-white max-h-[80vh]">
@@ -511,14 +533,15 @@ const App: React.FC = () => {
     }
   };
 
+  // Determine if user is admin
+  const isAdmin = useMemo(() => user?.name.toLowerCase() === 'admin' || user?.name === 'Administrator', [user?.name]);
+
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
       <header className="bg-white border-b sticky top-0 z-50 shadow-sm h-16 md:h-20">
         <div className="max-w-[1600px] mx-auto px-6 h-full flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <button onClick={() => { setViewMode('study'); setStep(0); setCurrentLesson(defaultWeeklyLesson); }} className="p-2 hover:bg-gray-50 rounded-lg transition-colors text-[#1A2B3C]">
-              <HomeIcon size={24} />
-            </button>
+            <button onClick={() => { setViewMode('study'); setStep(0); setCurrentLesson(defaultWeeklyLesson); refreshStatsData(); }} className="p-2 hover:bg-gray-50 rounded-lg transition-colors text-[#1A2B3C]"><HomeIcon size={24} /></button>
             <div className="h-6 w-px bg-gray-200 mx-2" />
              <div className="relative group">
                 <button className="flex items-center gap-2 px-3 py-2 bg-gray-50 hover:bg-gray-100 rounded-lg transition-colors border border-gray-200">
@@ -535,7 +558,12 @@ const App: React.FC = () => {
               </div>
           </div>
           <div className="flex items-center gap-4">
-            <button onClick={() => setViewMode('stats')} className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-[14px] border transition-colors ${viewMode === 'stats' ? 'bg-blue-50 text-blue-600 border-blue-100' : 'text-gray-500 border-transparent hover:bg-gray-50'}`}>
+            {isAdmin && (
+              <button onClick={() => setViewMode('admin')} className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-[14px] border transition-colors ${viewMode === 'admin' ? 'bg-red-50 text-red-600 border-red-100' : 'text-gray-500 border-transparent hover:bg-red-50 hover:text-red-500'}`}>
+                <ShieldCheck size={18} /> <span className="hidden lg:inline">{lang.startsWith('zh') ? '后台日志' : 'Admin Logs'}</span>
+              </button>
+            )}
+            <button onClick={() => { setViewMode('stats'); refreshStatsData(); }} className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-[14px] border transition-colors ${viewMode === 'stats' ? 'bg-blue-50 text-blue-600 border-blue-100' : 'text-gray-500 border-transparent hover:bg-gray-50'}`}>
               <BarChart2 size={18} /> <span className="hidden lg:inline">{lang.startsWith('zh') ? '总计统计' : 'Overall Statistics'}</span>
             </button>
             <div className="relative group">
@@ -551,61 +579,43 @@ const App: React.FC = () => {
                 )}
             </div>
             {user ? (
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center text-white font-black text-xs">
-                  {user.name.charAt(0).toUpperCase()}
+              <div className="flex items-center gap-3">
+                <div className="flex flex-col items-end">
+                   <span className="text-[12px] font-black text-[#1A2B3C]">{user.name}</span>
+                   <span className="text-[9px] text-gray-400 font-bold uppercase tracking-widest">{lang.startsWith('zh') ? `访问 ${user.accessCount} 次` : `${user.accessCount} visits`}</span>
                 </div>
-                <span className="hidden sm:inline text-xs font-bold text-gray-600">{user.name}</span>
+                {user.picture ? <img src={user.picture} alt={user.name} className="w-8 h-8 rounded-full border shadow-sm" /> : <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center font-black text-xs">{user.name.charAt(0)}</div>}
               </div>
-            ) : (
-              <div id="google-signin-btn"></div>
-            )}
+            ) : null}
           </div>
         </div>
       </header>
 
       <main className="flex-1 max-w-[1600px] mx-auto w-full p-4 lg:px-12">{renderContent()}</main>
 
-      {showIdentityModal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[100] p-6">
-          <div className="bg-white rounded-[40px] shadow-2xl w-full max-w-md p-10 animate-in zoom-in-95 duration-300">
-            <div className="mb-8">
-              <h2 className="text-3xl font-black text-[#1A2B3C] tracking-tight mb-2">
-                {lang.startsWith('zh') ? "欢迎学习" : "Welcome"}
-              </h2>
-              <p className="text-gray-500 font-medium">
-                {lang.startsWith('zh') ? "请输入您的信息以开始记录作业。" : "Please enter your details to start recording homework."}
-              </p>
+      {/* Logon Identity Modal */}
+      {showLogon && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-6">
+          <div className="bg-white rounded-[40px] shadow-2xl w-full max-w-md p-10 space-y-8 animate-in zoom-in-95 duration-300">
+            <div className="text-center space-y-2">
+              <div className="w-16 h-16 bg-blue-50 text-blue-500 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                <UserIcon size={32} />
+              </div>
+              <h2 className="text-3xl font-black text-[#1A2B3C] tracking-tight">{lang.startsWith('zh') ? "欢迎使用" : "Welcome"}</h2>
+              <p className="text-gray-500 font-medium">{lang.startsWith('zh') ? "请输入您的姓名以开始分析作业。" : "Please enter your name to start."}</p>
             </div>
-            <form onSubmit={handleSaveIdentity} className="space-y-6">
-              <div className="space-y-2">
-                <label className="text-[11px] font-black uppercase tracking-widest text-gray-400 flex items-center gap-2">
-                  <UserIcon size={12} /> {lang.startsWith('zh') ? "您的姓名" : "Full Name"}
-                </label>
-                <input 
-                  type="text" required value={tempProfile.name} 
-                  onChange={e => setTempProfile(p => ({...p, name: e.target.value}))}
-                  className="w-full px-5 py-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 transition-all font-bold"
+            <form onSubmit={handleLogon} className="space-y-6">
+               <div className="space-y-1">
+                 <label className="text-[10px] font-black uppercase tracking-widest text-gray-400 ml-1">{lang.startsWith('zh') ? "您的姓名" : "Your Name"}</label>
+                 <input 
+                  type="text" required value={tempName} onChange={e => setTempName(e.target.value)} autoFocus
+                  className="w-full px-6 py-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 transition-all font-bold text-[#1A2B3C]"
                   placeholder={lang.startsWith('zh') ? "例如：张三" : "e.g. John Doe"}
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="text-[11px] font-black uppercase tracking-widest text-gray-400 flex items-center gap-2">
-                  <Mail size={12} /> {lang.startsWith('zh') ? "电子邮箱" : "Email Address"}
-                </label>
-                <input 
-                  type="email" required value={tempProfile.email} 
-                  onChange={e => setTempProfile(p => ({...p, email: e.target.value}))}
-                  className="w-full px-5 py-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 transition-all font-bold"
-                  placeholder="john@example.com"
-                />
-              </div>
-              <button 
-                type="submit"
-                className="w-full py-5 bg-[#1A2B3C] text-white rounded-2xl font-black shadow-xl hover:bg-black transition-all flex items-center justify-center gap-2"
-              >
-                {lang.startsWith('zh') ? "进入系统" : "Get Started"} <ChevronRight size={18} />
-              </button>
+                 />
+               </div>
+               <button type="submit" className="w-full py-5 bg-[#1A2B3C] text-white rounded-2xl font-black shadow-xl hover:bg-black hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-2">
+                 {lang.startsWith('zh') ? "进入工具" : "Enter Tool"} <ChevronRight size={18} />
+               </button>
             </form>
           </div>
         </div>
